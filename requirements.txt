@@ -1,0 +1,11 @@
+langchain
+streamlit
+azureopenai
+huggingface_hub
+langchain_openai
+langchain_community
+langchain_huggingface
+python-dotenv
+fitz
+PyMuPDF
+faiss-cpu
