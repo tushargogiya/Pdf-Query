@@ -76,9 +76,9 @@ if uploaded_file:
             raise ValueError("No documents found for the given query.")
         input_data = {"input_documents": docs, "question": query}
         chain = load_qa_chain(AzureChatOpenAI(
-                azure_endpoint="https://poa-openai-eus2.openai.azure.com/",
-                openai_api_version="2024-02-01",
-                deployment_name="gpt-4o",
+                azure_endpoint=azure_endpoint,
+                openai_api_version=version,
+                deployment_name=deployment_name,
                 openai_api_key=openai_api_key,
                 openai_api_type="azure",
                 temperature=0.1,
