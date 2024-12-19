@@ -11,8 +11,6 @@ import fitz
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain.chains.question_answering import load_qa_chain
-from constant import openai_api_key,version,deployment_name,azure_endpoint
-os.environ["openai_api_key"] = openai_api_key
 def get_response_model(question):
     model=AzureChatOpenAI(
     azure_endpoint=azure_endpoint,  openai_api_version=version,
@@ -66,7 +64,7 @@ if uploaded_file:
     length_function = len,
 )
     all_splits = text_splitter.split_text(pdf_text)
-    embeddings = AzureOpenAIEmbeddings(model="text-embedding-3-large",azure_endpoint="https://poa-openai-eus2.openai.azure.com/")
+    embeddings = AzureOpenAIEmbeddings(model="text-embedding-3-large",azure_endpoint=azure_endpoint)
     document_search = FAISS.from_texts(all_splits, embeddings)
     input=st.text_input("Ask questions from pdf",key="input")
     submit=st.button("Ask the question")
