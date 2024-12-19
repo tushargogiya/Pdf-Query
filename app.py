@@ -11,6 +11,10 @@ import fitz
 from langchain_core.vectorstores import InMemoryVectorStore
 from langchain_openai import AzureOpenAIEmbeddings
 from langchain.chains.question_answering import load_qa_chain
+openai_api_key = st.secrets["OPENAI_API_KEY"]
+version = st.secrets["AZURE_API_VERSION"]
+deployment_name = st.secrets["AZURE_DEPLOYMENT_NAME"]
+azure_endpoint = st.secrets["AZURE_ENDPOINT"]
 def get_response_model(question):
     model=AzureChatOpenAI(
     azure_endpoint=azure_endpoint,  openai_api_version=version,
