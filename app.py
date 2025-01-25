@@ -1,97 +1,91 @@
-from langchain_openai import AzureChatOpenAI
-from dotenv import load_dotenv
-load_dotenv()
 import streamlit as st
-import os
-import base64
-from langchain.vectorstores import FAISS
-from langchain.text_splitter import CharacterTextSplitter
-from langchain.schema import Document
-import fitz
-from langchain_core.vectorstores import InMemoryVectorStore
-from langchain_openai import AzureOpenAIEmbeddings
-from langchain.chains.question_answering import load_qa_chain
-openai_api_key = st.secrets["OPENAI_API_KEY"]
-version = st.secrets["AZURE_API_VERSION"]
-deployment_name = st.secrets["AZURE_DEPLOYMENT_NAME"]
-azure_endpoint = st.secrets["AZURE_ENDPOINT"]
-def get_response_model(question):
-    model=AzureChatOpenAI(
-    azure_endpoint=azure_endpoint,  openai_api_version=version,
-    deployment_name=deployment_name,
-        openai_api_type="azure",
-        temperature=0.1,
-        max_tokens=4096,
-        frequency_penalty=0.1,
-        presence_penalty=0.1,
-        top_p=0.01)
-    response=model.invoke(question)
-    return response
-# Background CSS
-st.set_page_config(page_title="PDF Talker", page_icon="🧊",layout="wide",initial_sidebar_state="expanded",)
-def load_image(image_path):
-    with open(image_path, "rb") as img_file:
-        return base64.b64encode(img_file.read()).decode()
-import streamlit as st
+from pdf_qa import PdfQA
+from pathlib import Path
+from tempfile import NamedTemporaryFile
+import time
+import shutil
+from constants import *
 
-page_element="""
-<style>
-[data-testid="stAppViewContainer"]{
-  background-image: url("https://cdn.wallpapersafari.com/88/75/cLUQqJ.jpg");
-  background-size: cover;
-}
-[data-testid="stHeader"]{
-  background-color: rgba(0,0,0,0);
-}
-</style>
-"""
-st.markdown(page_element, unsafe_allow_html=True)
 
-st.header("Your personal pdf reader")
-uploaded_file = st.file_uploader("Upload a PDF file", type="pdf")
-if uploaded_file:
-    def extract_text_from_pdf(pdf_file):
-        pdf_reader = fitz.open(stream=pdf_file.read(), filetype="pdf")
-        text = ""
-        for page in pdf_reader:
-            text += page.get_text()
-        pdf_reader.close()
-        return text
 
-    pdf_text = extract_text_from_pdf(uploaded_file)
-    st.write("### Extracted PDF Content:")
-    st.text_area("PDF Text", pdf_text, height=300)
-    text_splitter = CharacterTextSplitter(
-    separator = "\n",
-    chunk_size = 800,
-    chunk_overlap  = 200,
-    length_function = len,
+# Streamlit app code
+st.set_page_config(
+    page_title='Q&A Bot for PDF',
+    page_icon='🔖',
+    layout='wide',
+    initial_sidebar_state='auto',
 )
-    all_splits = text_splitter.split_text(pdf_text)
-    embeddings = AzureOpenAIEmbeddings(model="text-embedding-3-large",azure_endpoint=azure_endpoint)
-    document_search = FAISS.from_texts(all_splits, embeddings)
-    input=st.text_input("Ask questions from pdf",key="input")
-    submit=st.button("Ask the question")
-    if submit:
-        query = input
-        docs = document_search.similarity_search(query)
-        print(docs)
-        if not docs:
-            raise ValueError("No documents found for the given query.")
-        input_data = {"input_documents": docs, "question": query}
-        chain = load_qa_chain(AzureChatOpenAI(
-                azure_endpoint=azure_endpoint,
-                openai_api_version=version,
-                deployment_name=deployment_name,
-                openai_api_key=openai_api_key,
-                openai_api_type="azure",
-                temperature=0.1,
-                max_tokens=4096,
-                frequency_penalty=0.1,
-                presence_penalty=0.1,
-                top_p=0.01,
-            ), chain_type="stuff")
-        response = chain.run(**input_data)
-        print(response)
-        st.subheader("The response is")
-        st.write(response)
+
+
+if "pdf_qa_model" not in st.session_state:
+    st.session_state["pdf_qa_model"]:PdfQA = PdfQA() ## Intialisation
+
+## To cache resource across multiple session 
+@st.cache_resource
+def load_llm(llm,load_in_8bit):
+
+    if llm == LLM_OPENAI_GPT35:
+        pass
+    elif llm == LLM_FLAN_T5_SMALL:
+        return PdfQA.create_flan_t5_small(load_in_8bit)
+    elif llm == LLM_FLAN_T5_BASE:
+        return PdfQA.create_flan_t5_base(load_in_8bit)
+    elif llm == LLM_FLAN_T5_LARGE:
+        return PdfQA.create_flan_t5_large(load_in_8bit)
+    elif llm == LLM_FASTCHAT_T5_XL:
+        return PdfQA.create_fastchat_t5_xl(load_in_8bit)
+    elif llm == LLM_FALCON_SMALL:
+        return PdfQA.create_falcon_instruct_small(load_in_8bit)
+    else:
+        raise ValueError("Invalid LLM setting")
+
+## To cache resource across multiple session
+@st.cache_resource
+def load_emb(emb):
+    if emb == EMB_INSTRUCTOR_XL:
+        return PdfQA.create_instructor_xl()
+    elif emb == EMB_SBERT_MPNET_BASE:
+        return PdfQA.create_sbert_mpnet()
+    elif emb == EMB_SBERT_MINILM:
+        pass ##ChromaDB takes care
+    else:
+        raise ValueError("Invalid embedding setting")
+
+
+
+st.title("PDF Q&A (Self hosted LLMs)")
+
+with st.sidebar:
+    emb = EMB_SBERT_MINILM
+    llm = st.radio("**Select LLM Model**", [LLM_FASTCHAT_T5_XL, LLM_FLAN_T5_SMALL,LLM_FLAN_T5_BASE,LLM_FLAN_T5_LARGE,LLM_FLAN_T5_XL,LLM_FALCON_SMALL],index=2)
+    load_in_8bit =  False
+    pdf_file = st.file_uploader("**Upload PDF**", type="pdf")
+
+    
+    if st.button("Submit") and pdf_file is not None:
+        with st.spinner(text="Uploading PDF and Generating Embeddings.."):
+            with NamedTemporaryFile(delete=False, suffix='.pdf') as tmp:
+                shutil.copyfileobj(pdf_file, tmp)
+                tmp_path = Path(tmp.name)
+                st.session_state["pdf_qa_model"].config = {
+                    "pdf_path": str(tmp_path),
+                    "embedding": emb,
+                    "llm": llm,
+                    "load_in_8bit": load_in_8bit
+                }
+                st.session_state["pdf_qa_model"].embedding = load_emb(emb)
+                st.session_state["pdf_qa_model"].llm = load_llm(llm,load_in_8bit)        
+                st.session_state["pdf_qa_model"].init_embeddings()
+                st.session_state["pdf_qa_model"].init_models()
+                st.session_state["pdf_qa_model"].vector_db_pdf()
+                st.sidebar.success("PDF uploaded successfully")
+
+question = st.text_input('Ask a question', 'What is this document?')
+
+if st.button("Answer"):
+    try:
+        st.session_state["pdf_qa_model"].retreival_qa_chain()
+        answer = st.session_state["pdf_qa_model"].answer_query(question)
+        st.write(f"{answer}")
+    except Exception as e:
+        st.error(f"Error answering the question: {str(e)}")
