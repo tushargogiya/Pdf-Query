@@ -1,7 +1,24 @@
-#!/bin/bash
+PROJECT_DIR="$(cd -P "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 
-# Pre-install torch and dependencies
-pip install torch==2.0.1 torchvision==0.15.2 torchaudio==2.0.1 --index-url https://download.pytorch.org/whl/cpu
+cd "$PROJECT_DIR"
 
-# Install xformers explicitly
-pip install xformers==0.0.20 --no-build-isolation
+# Set the name of the virtual environment
+VENV_NAME=.venv
+
+## Check if the virtual environment exists
+if [ ! -d "$VENV_NAME" ]; then
+  # Create the virtual environment
+  python -m venv "$VENV_NAME"
+fi
+source "$VENV_NAME/bin/activate"
+# export PATH="/root/.local/bin:$PATH"
+pip freeze
+pip install -r requirements.txt --ignore-installed
+pip freeze
+export PROTOCOL_BUFFERS_PYTHON_IMPLEMENTATION=python
+export STREAMLIT_RUNONSSAVE=True
+
+
+streamlit run streamlit_app_blog.py --server.port 8787 --browser.serverAddress localhost --server.fileWatcherType none
+
+deactivate
