@@ -5,8 +5,9 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain_openai import AzureChatOpenAI
 from langchain_community.embeddings import HuggingFaceEmbeddings
 from langchain_community.vectorstores import FAISS
-from langchain.chains import RetrievalQA
-from langchain.prompts import PromptTemplate
+from langchain_core.prompts import PromptTemplate
+from langchain_core.runnables import RunnablePassthrough, RunnableParallel
+from langchain_core.output_parsers import StrOutputParser
 
 PROMPT_TEMPLATE = """You are an expert document analyst. Use ONLY the context below to answer the question.
 If the answer is not in the context, say: "I don't have enough information in this document to answer that."
@@ -24,22 +25,18 @@ PROMPT = PromptTemplate(
     input_variables=["context", "question"],
 )
 
-# Singleton embeddings model (loaded once, reused across sessions)
-@staticmethod
-def _get_embeddings():
-    return HuggingFaceEmbeddings(
-        model_name="all-MiniLM-L6-v2",
-        model_kwargs={"device": "cpu"},
-        encode_kwargs={"normalize_embeddings": True},
-    )
+
+def _format_docs(docs):
+    return "\n\n".join(doc.page_content for doc in docs)
 
 
 class PdfQAEngine:
-    _embeddings = None  # class-level cache
+    _embeddings = None  # class-level singleton to avoid reloading
 
     def __init__(self):
         self.vectordb = None
-        self.qa_chain = None
+        self.retriever = None
+        self.rag_chain = None
         self.doc_info = {}
 
         if PdfQAEngine._embeddings is None:
@@ -58,7 +55,7 @@ class PdfQAEngine:
         )
 
     def load_pdf(self, pdf_bytes: bytes, filename: str) -> dict:
-        """Load PDF bytes, chunk, embed, build FAISS index."""
+        """Load PDF bytes, chunk, embed, build FAISS index and LCEL chain."""
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp:
             tmp.write(pdf_bytes)
             tmp_path = tmp.name
@@ -74,18 +71,22 @@ class PdfQAEngine:
         chunks = splitter.split_documents(documents)
 
         self.vectordb = FAISS.from_documents(chunks, PdfQAEngine._embeddings)
-
-        retriever = self.vectordb.as_retriever(
+        self.retriever = self.vectordb.as_retriever(
             search_type="mmr",
             search_kwargs={"k": 5, "fetch_k": 15},
         )
 
-        self.qa_chain = RetrievalQA.from_chain_type(
-            llm=self.llm,
-            chain_type="stuff",
-            retriever=retriever,
-            return_source_documents=True,
-            chain_type_kwargs={"prompt": PROMPT},
+        # Modern LCEL chain — retrieves docs + generates answer
+        self.rag_chain = RunnableParallel(
+            answer=(
+                RunnablePassthrough.assign(
+                    context=lambda x: _format_docs(x["context"])
+                )
+                | PROMPT
+                | self.llm
+                | StrOutputParser()
+            ),
+            context=lambda x: x["context"],
         )
 
         self.doc_info = {
@@ -98,14 +99,15 @@ class PdfQAEngine:
         return self.doc_info
 
     def answer(self, question: str) -> dict:
-        if not self.qa_chain:
+        if not self.rag_chain:
             raise ValueError("No PDF loaded. Please upload and process a PDF first.")
 
-        result = self.qa_chain({"query": question})
+        retrieved_docs = self.retriever.invoke(question)
+        result = self.rag_chain.invoke({"context": retrieved_docs, "question": question})
 
         sources = []
         seen = set()
-        for doc in result.get("source_documents", []):
+        for doc in retrieved_docs:
             page = doc.metadata.get("page", 0)
             snippet = doc.page_content[:250].strip()
             key = (page, snippet[:50])
@@ -114,6 +116,6 @@ class PdfQAEngine:
                 sources.append({"page": int(page) + 1, "snippet": snippet})
 
         return {
-            "answer": result["result"],
+            "answer": result["answer"],
             "sources": sources,
         }
